@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 
 export default function Home() {
   const [image, setImage] = useState<string | null>(null);
@@ -19,7 +20,7 @@ export default function Home() {
       <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start text-center">
         <h1 className="text-3xl font-bold">Sudoku Scanner</h1>
         <p className="text-lg text-gray-600">
-          Upload or capture an image of a Sudoku puzzle, and we'll help you solve it!
+          Upload or capture an image of a Sudoku puzzle, and we&apos;ll help you solve it!
         </p>
         <div className="flex flex-col gap-4 items-center">
           <label className="cursor-pointer bg-blue-500 text-white py-2 px-4 rounded hover:bg-blue-600">
@@ -34,10 +35,12 @@ export default function Home() {
           {image && (
             <div className="flex flex-col items-center">
               <h2 className="text-lg font-semibold mt-4">Preview</h2>
-              <img
+              <Image
                 src={image}
                 alt="Uploaded Sudoku"
                 className="border rounded-md shadow-md max-w-full max-h-96"
+                width={400} // Postavi širinu
+                height={400} // Postavi visinu
               />
             </div>
           )}

@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import Webcam from "react-webcam";
 import Image from "next/image";
+import Tesseract from "tesseract.js";
 
 // Tipovi za OpenCV.js
 declare global {
@@ -13,16 +14,17 @@ declare global {
 
 export default function Home() {
   const [image, setImage] = useState<string | null>(null);
-  const [useCamera, setUseCamera] = useState(false);
   const [processedImage, setProcessedImage] = useState<string | null>(null);
-  const webcamRef = useRef<Webcam>(null);
+  const [cellImages, setCellImages] = useState<string[][] | null>(null);
 
+  // Učitavanje OpenCV.js biblioteke
   useEffect(() => {
     if (!window.cv) {
       const script = document.createElement("script");
       script.src = "https://docs.opencv.org/3.4.0/opencv.js";
       script.async = true;
       script.onload = () => console.log("OpenCV.js loaded");
+      script.onerror = () => console.error("Failed to load OpenCV.js");
       document.body.appendChild(script);
     }
   }, []);
@@ -36,15 +38,7 @@ export default function Home() {
     }
   };
 
-  const captureImage = () => {
-    const imageSrc = webcamRef.current?.getScreenshot();
-    if (imageSrc) {
-      setImage(imageSrc);
-      setUseCamera(false);
-    }
-  };
-
-  const processImage = () => {
+  const processImage = async () => {
     if (!image || !window.cv) {
       console.error("OpenCV.js is not loaded or image is not available.");
       return;
@@ -53,7 +47,7 @@ export default function Home() {
     const img = document.createElement("img");
     img.src = image;
 
-    img.onload = () => {
+    img.onload = async () => {
       const canvas = document.createElement("canvas");
       canvas.width = img.width;
       canvas.height = img.height;
@@ -77,27 +71,20 @@ export default function Home() {
       cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
       console.log("Number of contours found:", contours.size());
 
-      // Detekcija najveće konture
       let largestArea = 0;
-      let sudokuContour = null;
       let boundingRect = null;
       for (let i = 0; i < contours.size(); i++) {
         const cnt = contours.get(i);
         const area = cv.contourArea(cnt);
         if (area > largestArea) {
           largestArea = area;
-          sudokuContour = cnt;
           boundingRect = cv.boundingRect(cnt);
         }
       }
 
-      if (sudokuContour && boundingRect) {
-        console.log("Largest contour area:", largestArea);
-        console.log("Bounding Rect:", boundingRect);
-
+      if (boundingRect) {
         const { x, y, width, height } = boundingRect;
 
-        // Točke za preslikavanje
         const srcCoords = [
           { x, y },
           { x: x + width, y },
@@ -118,23 +105,38 @@ export default function Home() {
         const warped = new cv.Mat();
         cv.warpPerspective(src, warped, perspectiveMatrix, new cv.Size(300, 300));
 
-        // Prikaz rezultata
-        const outputCanvas = document.createElement("canvas");
-        cv.imshow(outputCanvas, warped);
-        setProcessedImage(outputCanvas.toDataURL());
+        // Segmentacija mreže na 9x9 ćelija
+        const cellSize = 300 / 9;
+        const cells: string[][] = [];
 
-        // Čišćenje resursa
+        for (let row = 0; row < 9; row++) {
+          const cellRow: string[] = [];
+          for (let col = 0; col < 9; col++) {
+            const x = col * cellSize;
+            const y = row * cellSize;
+            const cell = warped.roi(new cv.Rect(x, y, cellSize, cellSize));
+
+            // Pretvaranje ćelije u sliku
+            const cellCanvas = document.createElement("canvas");
+            cellCanvas.width = cellSize;
+            cellCanvas.height = cellSize;
+            cv.imshow(cellCanvas, cell);
+            cellRow.push(cellCanvas.toDataURL());
+
+            cell.delete();
+          }
+          cells.push(cellRow);
+        }
+
+        setCellImages(cells);
+
+        // Oslobađanje resursa
         srcMat.delete();
         dstMat.delete();
         warped.delete();
-      } else {
-        console.log("No valid Sudoku contour found.");
-        const outputCanvas = document.createElement("canvas");
-        cv.imshow(outputCanvas, src); // Prikazuje originalnu sliku ako nema mreže
-        setProcessedImage(outputCanvas.toDataURL());
       }
 
-      // Čišćenje resursa
+      // Oslobađanje resursa
       src.delete();
       gray.delete();
       edges.delete();
@@ -157,12 +159,6 @@ export default function Home() {
       </header>
       <main className="max-w-4xl mx-auto py-12 px-8 text-center">
         <div className="flex justify-center gap-6 mb-12">
-          <button
-            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-8 rounded-full shadow-lg transition-all transform hover:scale-105"
-            onClick={() => setUseCamera(true)}
-          >
-            Use Camera
-          </button>
           <label className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-8 rounded-full shadow-lg cursor-pointer transition-all transform hover:scale-105">
             Upload Image
             <input
@@ -175,7 +171,7 @@ export default function Home() {
         </div>
 
         {image && (
-          <div className="flex flex-col items-center justify-center h-screen">
+          <div className="flex flex-col items-center">
             <h2 className="text-2xl font-bold text-gray-300 mb-4">Preview</h2>
             <Image
               src={image}
@@ -193,14 +189,28 @@ export default function Home() {
           </div>
         )}
 
-        {processedImage && (
-          <div className="flex flex-col items-center justify-center h-screen">
-            <h2 className="text-2xl font-bold text-gray-300 mb-4">Processed Image</h2>
-            <img
-              src={processedImage}
-              alt="Processed Sudoku"
-              className="border border-gray-700 rounded-lg shadow-xl max-w-full"
-            />
+        {cellImages && (
+          <div className="mt-8">
+            <h2 className="text-2xl font-bold text-gray-300 mb-4">Sudoku Cells</h2>
+            <div className="grid gap-4">
+              {cellImages.map((row, rowIndex) =>
+                row.map((cell, colIndex) => (
+                  <div
+                    key={`${rowIndex}-${colIndex}`}
+                    className="flex flex-col items-center"
+                  >
+                    <img
+                      src={cell}
+                      alt={`Cell ${rowIndex}-${colIndex}`}
+                      className="border border-gray-600 p-2 rounded-md shadow-lg"
+                    />
+                    <p className="text-gray-400 mt-2">
+                      Cell {rowIndex + 1}, {colIndex + 1}
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         )}
       </main>

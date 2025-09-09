@@ -4,15 +4,41 @@ import { useState, useEffect } from "react";
 import Image from "next/image";
 import Tesseract from "tesseract.js";
 
+interface OpenCV {
+  Mat: new () => unknown;
+  MatVector: new () => unknown;
+  Size: new (w: number, h: number) => unknown;
+  Rect: new (x: number, y: number, w: number, h: number) => unknown;
+  imread(canvas: HTMLCanvasElement): unknown;
+  imshow(canvas: HTMLCanvasElement, mat: unknown): void;
+  cvtColor(src: unknown, dst: unknown, code: number, dstCn: number): void;
+  Canny(src: unknown, edges: unknown, t1: number, t2: number): void;
+  findContours(
+    src: unknown,
+    contours: unknown,
+    hierarchy: unknown,
+    mode: number,
+    method: number
+  ): void;
+  contourArea(cnt: unknown): number;
+  boundingRect(cnt: unknown): { x: number; y: number; width: number; height: number };
+  matFromArray(rows: number, cols: number, type: number, arr: number[]): unknown;
+  getPerspectiveTransform(src: unknown, dst: unknown): unknown;
+  warpPerspective(src: unknown, dst: unknown, M: unknown, dsize: unknown): void;
+  COLOR_RGBA2GRAY: number;
+  RETR_EXTERNAL: number;
+  CHAIN_APPROX_SIMPLE: number;
+  CV_32FC2: number;
+}
+
 declare global {
   interface Window {
-    cv: any;
+    cv?: OpenCV;
   }
 }
 
 export default function Home() {
   const [image, setImage] = useState<string | null>(null);
-  const [cellImages, setCellImages] = useState<{ image: string; text: string }[][] | null>(null);
   const [solvedGrid, setSolvedGrid] = useState<number[][] | null>(null);
   const [editableGrid, setEditableGrid] = useState<number[][] | null>(null);
 
@@ -174,7 +200,6 @@ export default function Home() {
           }
         }
 
-        setCellImages(grid.map((row) => row.map((num) => ({ image: "", text: num.toString() }))));
         setEditableGrid(grid.map((row) => [...row]));
 
         srcMat.delete();

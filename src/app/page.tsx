@@ -1,11 +1,9 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import Webcam from "react-webcam";
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import Tesseract from "tesseract.js";
 
-// Tipovi za OpenCV.js
 declare global {
   interface Window {
     cv: any;
@@ -14,10 +12,10 @@ declare global {
 
 export default function Home() {
   const [image, setImage] = useState<string | null>(null);
-  const [processedImage, setProcessedImage] = useState<string | null>(null);
-  const [cellImages, setCellImages] = useState<string[][] | null>(null);
+  const [cellImages, setCellImages] = useState<{ image: string; text: string }[][] | null>(null);
+  const [solvedGrid, setSolvedGrid] = useState<number[][] | null>(null);
+  const [editableGrid, setEditableGrid] = useState<number[][] | null>(null);
 
-  // Učitavanje OpenCV.js biblioteke
   useEffect(() => {
     if (!window.cv) {
       const script = document.createElement("script");
@@ -29,6 +27,27 @@ export default function Home() {
     }
   }, []);
 
+  const recognizeCell = async (cellImage: string): Promise<string> => {
+    try {
+      const worker = await Tesseract.createWorker();
+      await worker.load();
+      await worker.reinitialize("eng");
+      await worker.setParameters({
+        tessedit_char_whitelist: "123456789",
+      });
+
+      const result = await worker.recognize(cellImage);
+      await worker.terminate();
+
+      let text = result.data.text.trim();
+      if (text.length > 1) text = text.charAt(0);
+      return text || "?";
+    } catch (error) {
+      console.error("OCR error:", error);
+      return "?";
+    }
+  };
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
@@ -36,6 +55,40 @@ export default function Home() {
       reader.onload = (e) => setImage(e.target?.result as string);
       reader.readAsDataURL(file);
     }
+  };
+
+  const solveSudoku = (grid: number[][]): boolean => {
+    const findEmpty = () => {
+      for (let i = 0; i < 9; i++) {
+        for (let j = 0; j < 9; j++) {
+          if (grid[i][j] === 0) return [i, j];
+        }
+      }
+      return null;
+    };
+
+    const isValid = (num: number, row: number, col: number): boolean => {
+      for (let i = 0; i < 9; i++) {
+        if (grid[row][i] === num || grid[i][col] === num) return false;
+        const boxRow = 3 * Math.floor(row / 3) + Math.floor(i / 3);
+        const boxCol = 3 * Math.floor(col / 3) + (i % 3);
+        if (grid[boxRow][boxCol] === num) return false;
+      }
+      return true;
+    };
+
+    const empty = findEmpty();
+    if (!empty) return true;
+
+    const [row, col] = empty;
+    for (let num = 1; num <= 9; num++) {
+      if (isValid(num, row, col)) {
+        grid[row][col] = num;
+        if (solveSudoku(grid)) return true;
+        grid[row][col] = 0;
+      }
+    }
+    return false;
   };
 
   const processImage = async () => {
@@ -61,15 +114,9 @@ export default function Home() {
       const contours = new cv.MatVector();
       const hierarchy = new cv.Mat();
 
-      // Pretvaranje u sivu skalu
       cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
-
-      // Detekcija rubova
       cv.Canny(gray, edges, 100, 200);
-
-      // Pronalazak kontura
       cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-      console.log("Number of contours found:", contours.size());
 
       let largestArea = 0;
       let boundingRect = null;
@@ -105,44 +152,62 @@ export default function Home() {
         const warped = new cv.Mat();
         cv.warpPerspective(src, warped, perspectiveMatrix, new cv.Size(300, 300));
 
-        // Segmentacija mreže na 9x9 ćelija
         const cellSize = 300 / 9;
-        const cells: string[][] = [];
+        const grid: number[][] = Array.from({ length: 9 }, () => Array(9).fill(0));
 
         for (let row = 0; row < 9; row++) {
-          const cellRow: string[] = [];
           for (let col = 0; col < 9; col++) {
             const x = col * cellSize;
             const y = row * cellSize;
             const cell = warped.roi(new cv.Rect(x, y, cellSize, cellSize));
 
-            // Pretvaranje ćelije u sliku
             const cellCanvas = document.createElement("canvas");
             cellCanvas.width = cellSize;
             cellCanvas.height = cellSize;
             cv.imshow(cellCanvas, cell);
-            cellRow.push(cellCanvas.toDataURL());
+            const cellImage = cellCanvas.toDataURL();
+
+            const text = await recognizeCell(cellImage);
+            grid[row][col] = parseInt(text) || 0;
 
             cell.delete();
           }
-          cells.push(cellRow);
         }
 
-        setCellImages(cells);
+        setCellImages(grid.map((row) => row.map((num) => ({ image: "", text: num.toString() }))));
+        setEditableGrid(grid.map((row) => [...row]));
 
-        // Oslobađanje resursa
         srcMat.delete();
         dstMat.delete();
         warped.delete();
       }
 
-      // Oslobađanje resursa
       src.delete();
       gray.delete();
       edges.delete();
       contours.delete();
       hierarchy.delete();
     };
+  };
+
+  const handleSolveSudoku = () => {
+    if (editableGrid) {
+      const gridCopy = editableGrid.map((row) => [...row]);
+      if (solveSudoku(gridCopy)) {
+        setSolvedGrid(gridCopy);
+      } else {
+        alert("Sudoku cannot be solved!");
+      }
+    }
+  };
+
+  const handleEditCell = (rowIndex: number, colIndex: number, value: string) => {
+    if (editableGrid) {
+      const updatedGrid = editableGrid.map((row, rIdx) =>
+        row.map((cell, cIdx) => (rIdx === rowIndex && cIdx === colIndex ? parseInt(value) || 0 : cell))
+      );
+      setEditableGrid(updatedGrid);
+    }
   };
 
   return (
@@ -189,28 +254,69 @@ export default function Home() {
           </div>
         )}
 
-        {cellImages && (
+        {editableGrid && (
           <div className="mt-8">
-            <h2 className="text-2xl font-bold text-gray-300 mb-4">Sudoku Cells</h2>
-            <div className="grid gap-4">
-              {cellImages.map((row, rowIndex) =>
-                row.map((cell, colIndex) => (
-                  <div
-                    key={`${rowIndex}-${colIndex}`}
-                    className="flex flex-col items-center"
-                  >
-                    <img
-                      src={cell}
-                      alt={`Cell ${rowIndex}-${colIndex}`}
-                      className="border border-gray-600 p-2 rounded-md shadow-lg"
-                    />
-                    <p className="text-gray-400 mt-2">
-                      Cell {rowIndex + 1}, {colIndex + 1}
-                    </p>
-                  </div>
-                ))
-              )}
-            </div>
+            <h2 className="text-2xl font-bold text-gray-300 mb-4">Editable Sudoku Grid</h2>
+            <table className="border-collapse mx-auto" style={{ border: "2px solid white" }}>
+              <tbody>
+                {editableGrid.map((row, rowIndex) => (
+                  <tr key={rowIndex} style={{ borderBottom: rowIndex % 3 === 2 ? "2px solid white" : "1px solid gray" }}>
+                    {row.map((cell, colIndex) => (
+                      <td
+                        key={`${rowIndex}-${colIndex}`}
+                        className="w-16 h-16 text-center text-lg font-semibold align-middle"
+                        style={{
+                          backgroundColor: "#1f2937",
+                          color: "white",
+                          borderRight: colIndex % 3 === 2 ? "2px solid white" : "1px solid gray",
+                        }}
+                      >
+                        <input
+                          type="text"
+                          value={cell || ""}
+                          maxLength={1}
+                          onChange={(e) => handleEditCell(rowIndex, colIndex, e.target.value)}
+                          className="w-full h-full text-center bg-transparent border-none text-white outline-none"
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <button
+              className="mt-4 bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-8 rounded-full shadow-lg transition-all transform hover:scale-105"
+              onClick={handleSolveSudoku}
+            >
+              Solve Sudoku
+            </button>
+          </div>
+        )}
+
+        {solvedGrid && (
+          <div className="mt-8">
+            <h2 className="text-2xl font-bold text-gray-300 mb-4">Solved Sudoku</h2>
+            <table className="border-collapse mx-auto" style={{ border: "2px solid white" }}>
+              <tbody>
+                {solvedGrid.map((row, rowIndex) => (
+                  <tr key={rowIndex} style={{ borderBottom: rowIndex % 3 === 2 ? "2px solid white" : "1px solid gray" }}>
+                    {row.map((num, colIndex) => (
+                      <td
+                        key={`${rowIndex}-${colIndex}`}
+                        className="w-16 h-16 text-center text-lg font-semibold align-middle"
+                        style={{
+                          backgroundColor: "#1f2937",
+                          color: "white",
+                          borderRight: colIndex % 3 === 2 ? "2px solid white" : "1px solid gray",
+                        }}
+                      >
+                        {num || ""}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </main>
